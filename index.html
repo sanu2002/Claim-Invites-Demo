@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Invite Demo — Claim + Invites</title>
+<style>
+  :root{--bg:#f6fbff;--muted:#6b7280;--accent:#7c3aed;--card:#fff}
+  body{margin:0;font-family:system-ui,Arial;background:linear-gradient(180deg,#eef8ff,#f6fbff);color:#0f172a;min-height:100vh}
+  .wrap{max-width:980px;margin:36px auto;padding:20px}
+  .panel{background:var(--card);padding:18px;border-radius:12px;box-shadow:0 12px 30px rgba(2,6,23,0.06);display:flex;justify-content:space-between;align-items:center}
+  .left h1{margin:0 0 6px}
+  .small{color:var(--muted);margin:0}
+  .btn{padding:10px 14px;border-radius:999px;border:0;background:var(--accent);color:#fff;font-weight:700;cursor:pointer}
+  .section{margin-top:18px;background:var(--card);padding:16px;border-radius:12px;box-shadow:0 8px 24px rgba(2,6,23,0.04)}
+  .invite-grid{display:flex;gap:12px;flex-wrap:wrap}
+  .invite{background:#fafafa;padding:12px;border-radius:10px;border:1px solid rgba(2,6,23,0.04);min-width:200px}
+  .invite .code{font-family:monospace;font-weight:700;margin:8px 0}
+  .small-muted{font-size:13px;color:var(--muted)}
+  .danger{color:#b91c1c}
+  .ok{color:#14532d}
+  .row{display:flex;gap:8px;align-items:center}
+  .right {text-align:right}
+  .hidden{display:none}
+  .timer{font-size:13px;color:#374151}
+  .regenerate{background:transparent;border:1px solid rgba(2,6,23,.06);padding:6px 10px;border-radius:8px;cursor:pointer}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel">
+      <div class="left">
+        <h1>Claim & Invites Demo</h1>
+        <p class="small">Claim the demo card, then use the invite panel to create or use invite codes. Timers reset after 7 days.</p>
+      </div>
+      <div class="right">
+        <div style="display:flex;gap:8px">
+          <button id="connectBtn" class="btn">Connect</button>
+          <button id="logoutBtn" style="padding:10px;border-radius:999px;border:1px solid rgba(2,6,23,0.06);background:white;cursor:pointer">Logout</button>
+        </div>
+        <div id="status" class="small-muted" style="margin-top:8px">Not connected</div>
+      </div>
+    </div>
+
+    <!-- Claim area -->
+    <div id="claimArea" class="section">
+      <h3>Claim</h3>
+      <p class="small-muted">Click claim to receive a demo reward and your invite links (server-verified).</p>
+      <div style="margin-top:12px">
+        <button id="claimBtn" class="btn">Claim Reward (Demo)</button>
+        <span id="claimInfo" style="margin-left:12px" class="small-muted"></span>
+      </div>
+    </div>
+
+    <!-- Invite panel (hidden until claimed) -->
+    <div id="invitePanel" class="section hidden">
+      <h3>Your Invites</h3>
+      <p class="small-muted">You have two invite categories: <strong>KOL invites (3 single-use codes)</strong> and <strong>Normal invites (100 uses)</strong>. Each expires in 7 days after generation.</p>
+
+      <div style="margin-top:12px;display:flex;gap:18px;flex-wrap:wrap">
+        <!-- KOL invites -->
+        <div style="flex:1;min-width:300px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <strong>KOL Invites</strong>
+            <button id="regenKol" class="regenerate">Regenerate KOL invites</button>
+          </div>
+          <div id="kolList" class="invite-grid" style="margin-top:10px"></div>
+        </div>
+
+        <!-- Normal invites -->
+        <div style="flex:1;min-width:300px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <strong>Normal Invites (100 uses)</strong>
+            <button id="regenNormal" class="regenerate">Regenerate Normal invite</button>
+          </div>
+          <div id="normalBox" style="margin-top:10px"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const connectBtn = document.getElementById('connectBtn');
+  const logoutBtn = document.getElementById('logoutBtn');
+  const statusEl = document.getElementById('status');
+  const claimBtn = document.getElementById('claimBtn');
+  const claimInfo = document.getElementById('claimInfo');
+  const invitePanel = document.getElementById('invitePanel');
+  const kolList = document.getElementById('kolList');
+  const normalBox = document.getElementById('normalBox');
+  const regenKolBtn = document.getElementById('regenKol');
+  const regenNormalBtn = document.getElementById('regenNormal');
+
+  connectBtn.addEventListener('click', () => { window.location.href = '/login'; });
+  logoutBtn.addEventListener('click', async () => { await fetch('/api/logout', { method: 'POST' }); window.location.reload(); });
+
+  // Claim flow
+  claimBtn.addEventListener('click', async () => {
+    claimBtn.disabled = true;
+    claimInfo.textContent = 'Processing…';
+    try {
+      const res = await fetch('/api/claim', { method: 'POST', credentials: 'same-origin' });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || 'Claim failed');
+      claimInfo.textContent = 'Claim successful: ' + new Date(j.when).toLocaleString();
+      await loadInvitesAndShow();
+    } catch (err) {
+      alert('Claim failed: ' + err.message);
+      claimInfo.textContent = '';
+      claimBtn.disabled = false;
+    }
+  });
+
+  async function loadMe() {
+    try {
+      const res = await fetch('/api/me', { credentials: 'same-origin' });
+      if (!res.ok) throw new Error('not connected');
+      const j = await res.json();
+      statusEl.textContent = `Connected as @${j.user.username} — ${Number(j.user.followers).toLocaleString()} followers`;
+      if (j.claimed) {
+        claimInfo.textContent = 'Already claimed: ' + new Date(j.claimed.when).toLocaleString();
+        claimBtn.disabled = true;
+        await loadInvitesAndShow();
+      } else {
+        claimInfo.textContent = '';
+        claimBtn.disabled = false;
+      }
+    } catch (err) {
+      statusEl.textContent = 'Not connected';
+      claimInfo.textContent = '';
+      claimBtn.disabled = false;
+      invitePanel.classList.add('hidden');
+    }
+  }
+
+  async function loadInvitesAndShow() {
+    try {
+      const res = await fetch('/api/invites', { credentials: 'same-origin' });
+      if (!res.ok) throw new Error('could not load invites');
+      const j = await res.json();
+      invitePanel.classList.remove('hidden');
+
+      kolList.innerHTML = '';
+      j.kol.forEach((c) => {
+        const el = document.createElement('div');
+        el.className = 'invite';
+        const valid = c.valid;
+        el.innerHTML = `
+          <div style="font-size:13px;color:#374151">KOL code</div>
+          <div class="code">${c.code}</div>
+          <div class="small-muted row"><div>Uses: ${c.used}/${c.limit}</div><div style="margin-left:auto" class="timer" data-expires="${c.expiresAt}"></div></div>
+          <div style="margin-top:8px;display:flex;gap:8px">
+            <button class="useKol" ${!valid ? 'disabled' : ''}>Use</button>
+            <button class="copy" data-code="${c.code}">Copy</button>
+            <div style="margin-left:auto">${valid ? '<span class="ok">Valid</span>' : '<span class="danger">Invalid/Expired</span>'}</div>
+          </div>
+        `;
+        kolList.appendChild(el);
+        el.querySelector('.useKol').addEventListener('click', async () => {
+          await useCode(c.code);
+          await loadInvitesAndShow();
+        });
+        el.querySelector('.copy').addEventListener('click', (e) => {
+          navigator.clipboard?.writeText(c.code);
+          alert('Code copied: ' + c.code);
+        });
+      });
+
+      normalBox.innerHTML = '';
+      const n = j.normal;
+      const box = document.createElement('div');
+      box.className = 'invite';
+      box.innerHTML = `
+        <div style="font-size:13px;color:#374151">Normal invite pool</div>
+        <div class="code">${n.code}</div>
+        <div class="small-muted row"><div>Used: ${n.used}/${n.limit}</div><div style="margin-left:auto" class="timer" data-expires="${n.expiresAt}"></div></div>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          <button id="useNormal" ${!n.valid ? 'disabled' : ''}>Use (simulate)</button>
+          <button id="copyNormal">Copy</button>
+          <div style="margin-left:auto">${n.valid ? '<span class="ok">Valid</span>' : '<span class="danger">Invalid/Expired</span>'}</div>
+        </div>
+      `;
+      normalBox.appendChild(box);
+      box.querySelector('#useNormal').addEventListener('click', async () => {
+        await useCode(n.code);
+        await loadInvitesAndShow();
+      });
+      box.querySelector('#copyNormal').addEventListener('click', () => {
+        navigator.clipboard?.writeText(n.code);
+        alert('Code copied: ' + n.code);
+      });
+
+      startTimers();
+    } catch (err) {
+      console.error(err);
+      invitePanel.classList.add('hidden');
+    }
+  }
+
+  async function useCode(code) {
+    try {
+      const res = await fetch('/api/invites/use', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || 'Use failed');
+      alert(`Invite used for owner ${j.owner} (type: ${j.type})${j.remaining !== undefined ? ', remaining: ' + j.remaining : ''}`);
+    } catch (err) {
+      alert('Use failed: ' + err.message);
+    }
+  }
+
+  regenKolBtn.addEventListener('click', async () => {
+    if (!confirm('Regenerate KOL invites? This resets the 7-day window and uses.')) return;
+    await fetch('/api/invites/kol/regenerate', { method: 'POST', credentials: 'same-origin' });
+    await loadInvitesAndShow();
+  });
+  regenNormalBtn.addEventListener('click', async () => {
+    if (!confirm('Regenerate Normal invite pool? This resets the 7-day window and usage to 100.')) return;
+    await fetch('/api/invites/normal/regenerate', { method: 'POST', credentials: 'same-origin' });
+    await loadInvitesAndShow();
+  });
+
+  let timerInterval = null;
+  function startTimers() {
+    if (timerInterval) clearInterval(timerInterval);
+    timerInterval = setInterval(() => {
+      document.querySelectorAll('.timer').forEach((el) => {
+        const expires = Number(el.getAttribute('data-expires'));
+        if (!expires) { el.textContent = ''; return; }
+        const diff = expires - Date.now();
+        if (diff <= 0) {
+          el.textContent = 'Expired';
+          const parentUse = el.closest('.invite')?.querySelector('.useKol, #useNormal');
+          if (parentUse) parentUse.disabled = true;
+          return;
+        }
+        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+        const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
+        const mins = Math.floor((diff / (1000 * 60)) % 60);
+        const secs = Math.floor((diff / 1000) % 60);
+        if (days > 0) el.textContent = `${days}d ${hours}h`;
+        else el.textContent = `${hours}h ${mins}m ${secs}s`;
+      });
+    }, 1000);
+  }
+
+  window.addEventListener('load', () => {
+    loadMe();
+  });
+</script>
+</body>
+</html>
